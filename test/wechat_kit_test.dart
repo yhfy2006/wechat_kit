@@ -10,7 +10,6 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   const MethodChannel channel = MethodChannel('v7lin.github.io/wechat_kit');
-  final Wechat wechat = Wechat();
 
   setUp(() {
     channel.setMockMethodCallHandler((MethodCall call) async {
@@ -30,7 +29,7 @@ void main() {
                 'onAuthResp',
                 json.decode(
                     '{"country":"CN","code":null,"errorCode":-2,"state":null,"lang":"zh_CN","errorMsg":null}'))),
-            (ByteData data) {
+            (ByteData? data) {
               print('mock ${channel.name} ${call.method}');
             },
           ));
@@ -52,7 +51,7 @@ void main() {
             channel.name,
             channel.codec.encodeMethodCall(MethodCall('onShareMsgResp',
                 json.decode('{"errorCode":0,"errorMsg":null}'))),
-            (ByteData data) {
+            (ByteData? data) {
               print('mock ${channel.name} ${call.method}');
             },
           ));
@@ -67,8 +66,8 @@ void main() {
                 'onPayResp',
                 json.decode(
                     '{"errorCode":-2,"returnKey":"","errorMsg":null}'))),
-            (ByteData data) {
-              // mock success
+            (ByteData? data) {
+              print('mock ${channel.name} ${call.method}');
             },
           ));
           return null;
@@ -82,37 +81,38 @@ void main() {
   });
 
   test('isInstalled', () async {
-    expect(await wechat.isInstalled(), true);
+    expect(await Wechat.instance.isInstalled(), true);
   });
 
   test('isSupportApi', () async {
-    expect(await wechat.isSupportApi(), true);
+    expect(await Wechat.instance.isSupportApi(), true);
   });
 
   test('auth', () async {
-    StreamSubscription<WechatAuthResp> sub =
-        wechat.authResp().listen((WechatAuthResp resp) {
+    final StreamSubscription<WechatAuthResp> sub =
+        Wechat.instance.authResp().listen((WechatAuthResp resp) {
       expect(resp.errorCode, WechatSdkResp.ERRORCODE_USERCANCEL);
     });
-    await wechat.auth(scope: <String>[WechatScope.SNSAPI_USERINFO]);
+    await Wechat.instance.auth(scope: <String>[WechatScope.SNSAPI_USERINFO]);
     await sub.cancel();
   });
 
   test('share', () async {
-    StreamSubscription<WechatSdkResp> sub =
-        wechat.shareMsgResp().listen((WechatSdkResp resp) {
+    final StreamSubscription<WechatSdkResp> sub =
+        Wechat.instance.shareMsgResp().listen((WechatSdkResp resp) {
       expect(resp.errorCode, WechatSdkResp.ERRORCODE_SUCCESS);
     });
-    await wechat.shareText(scene: WechatScene.SESSION, text: 'share text');
+    await Wechat.instance
+        .shareText(scene: WechatScene.SESSION, text: 'share text');
     await sub.cancel();
   });
 
   test('pay', () async {
-    StreamSubscription<WechatPayResp> sub =
-        wechat.payResp().listen((WechatPayResp resp) {
+    final StreamSubscription<WechatPayResp> sub =
+        Wechat.instance.payResp().listen((WechatPayResp resp) {
       expect(resp.errorCode, WechatSdkResp.ERRORCODE_USERCANCEL);
     });
-    await wechat.pay(
+    await Wechat.instance.pay(
       appId: 'mock',
       partnerId: 'mock',
       prepayId: 'mock',

@@ -1,3 +1,40 @@
+## 2.3.1
+
+* 同 2.3.1-iOS-NoPay
+
+## 2.3.1-iOS-NoPay
+
+* bugfix
+
+## 2.3.0
+
+* 同 2.3.0-iOS-NoPay
+
+## 2.3.0-iOS-NoPay
+
+* fix ios dependency
+
+## 2.2.1-iOS-NoPay
+
+* 优化小程序分享
+
+## 2.2.0-iOS-NoPay
+
+* 同 2.2.0
+
+## 2.2.0
+
+* break change: Wechat 单例
+
+## 2.1.0
+
+* 同 2.1.0-iOS-NoPay
+
+## 2.1.0-iOS-NoPay
+
+* nullsafety
+* 不再支持 Android embedding v1
+
 ## 2.0.0-iOS-NoPay+1
 
 * iOS优化
@@ -21,7 +58,7 @@
 
 ## 1.1.2
 
-* [issues#49](https://github.com/v7lin/wechat_kit/issues/49)
+* [issues#49](https://github.com/rxreader/wechat_kit/issues/49)
 
 ## 1.1.1
 

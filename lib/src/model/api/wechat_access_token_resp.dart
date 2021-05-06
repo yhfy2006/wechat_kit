@@ -15,6 +15,7 @@ class WechatAccessTokenResp extends WechatApiResp {
     this.scope,
     this.accessToken,
     this.refreshToken,
+    this.unionid,
     this.expiresIn,
   }) : super(
           errcode: errcode,
@@ -28,6 +29,7 @@ class WechatAccessTokenResp extends WechatApiResp {
   final String scope;
   final String accessToken;
   final String refreshToken;
+  final String unionid;
   final int expiresIn; // 单位：秒
 
   @override

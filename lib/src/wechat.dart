@@ -6,16 +6,9 @@ import 'dart:typed_data';
 import 'package:convert/convert.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter/services.dart';
-import 'package:uuid/uuid.dart';
-import 'package:wechat_kit/src/model/api/wechat_access_token_resp.dart';
-import 'package:wechat_kit/src/model/api/wechat_ticket_resp.dart';
-import 'package:wechat_kit/src/model/api/wechat_user_info_resp.dart';
-import 'package:wechat_kit/src/model/qrauth/wechat_qrauth_resp.dart';
-import 'package:wechat_kit/src/model/sdk/wechat_auth_resp.dart';
-import 'package:wechat_kit/src/model/sdk/wechat_launch_mini_program_resp.dart';
-import 'package:wechat_kit/src/model/sdk/wechat_pay_resp.dart';
-import 'package:wechat_kit/src/model/sdk/wechat_sdk_resp.dart';
-import 'package:wechat_kit/src/model/sdk/wechat_subscribe_msg_resp.dart';
+import 'package:wechat_kit/src/model/qrauth.dart';
+import 'package:wechat_kit/src/model/req.dart';
+import 'package:wechat_kit/src/model/resp.dart';
 import 'package:wechat_kit/src/wechat_constant.dart';
 
 ///
@@ -28,8 +21,10 @@ class Wechat {
   static final Wechat _instance = Wechat._();
 
   static const String _METHOD_REGISTERAPP = 'registerApp';
+  static const String _METHOD_HANDLEINITIALWXREQ = 'handleInitialWXReq';
   static const String _METHOD_ISINSTALLED = 'isInstalled';
   static const String _METHOD_ISSUPPORTAPI = 'isSupportApi';
+  static const String _METHOD_ISSUPPORTSTATEAPI = 'isSupportStateAPI';
   static const String _METHOD_OPENWECHAT = 'openWechat';
   static const String _METHOD_AUTH = 'auth';
   static const String _METHOD_STARTQRAUTH = 'startQrauth';
@@ -46,7 +41,12 @@ class Wechat {
   static const String _METHOD_SHAREMINIPROGRAM = 'shareMiniProgram';
   static const String _METHOD_SUBSCRIBEMSG = 'subscribeMsg';
   static const String _METHOD_LAUNCHMINIPROGRAM = 'launchMiniProgram';
+  static const String _METHOD_OPENCUSTOMERSERVICECHAT =
+      'openCustomerServiceChat';
   static const String _METHOD_PAY = 'pay';
+
+  static const String _METHOD_ONLAUNCHFROMWXREQ = 'onLaunchFromWXReq';
+  static const String _METHOD_ONSHOWMESSAGEFROMWXREQ = 'onShowMessageFromWXReq';
 
   static const String _METHOD_ONAUTHRESP = 'onAuthResp';
   static const String _METHOD_ONOPENURLRESP = 'onOpenUrlResp';
@@ -54,6 +54,8 @@ class Wechat {
   static const String _METHOD_ONSUBSCRIBEMSGRESP = 'onSubscribeMsgResp';
   static const String _METHOD_ONLAUNCHMINIPROGRAMRESP =
       'onLaunchMiniProgramResp';
+  static const String _METHOD_ONOPENCUSTOMERSERVICECHATRESP =
+      'onOpenCustomerServiceChatResp';
   static const String _METHOD_ONPAYRESP = 'onPayResp';
   static const String _METHOD_ONAUTHGOTQRCODE = 'onAuthGotQrcode';
   static const String _METHOD_ONAUTHQRCODESCANNED = 'onAuthQrcodeScanned';
@@ -94,15 +96,11 @@ class Wechat {
   static const String _ARGUMENT_KEY_DISABLEFORWARD = 'disableForward';
   static const String _ARGUMENT_KEY_TEMPLATEID = 'templateId';
   static const String _ARGUMENT_KEY_RESERVED = 'reserved';
+  static const String _ARGUMENT_KEY_CORPID = 'corpId';
   static const String _ARGUMENT_KEY_PARTNERID = 'partnerId';
   static const String _ARGUMENT_KEY_PREPAYID = 'prepayId';
-
-//  static const String _ARGUMENT_KEY_NONCESTR = 'noncestr';
-//  static const String _ARGUMENT_KEY_TIMESTAMP = 'timestamp';
   static const String _ARGUMENT_KEY_PACKAGE = 'package';
   static const String _ARGUMENT_KEY_SIGN = 'sign';
-
-  static const String _ARGUMENT_KEY_RESULT_IMAGEDATA = 'imageData';
 
   static const String _SCHEME_FILE = 'file';
 
@@ -110,34 +108,14 @@ class Wechat {
       const MethodChannel('v7lin.github.io/wechat_kit')
         ..setMethodCallHandler(_handleMethod);
 
-  final StreamController<WechatAuthResp> _authRespStreamController =
-      StreamController<WechatAuthResp>.broadcast();
+  final StreamController<BaseReq> _reqStreamController =
+      StreamController<BaseReq>.broadcast();
 
-  final StreamController<WechatSdkResp> _openUrlRespStreamController =
-      StreamController<WechatSdkResp>.broadcast();
+  final StreamController<BaseResp> _respStreamController =
+      StreamController<BaseResp>.broadcast();
 
-  final StreamController<WechatSdkResp> _shareMsgRespStreamController =
-      StreamController<WechatSdkResp>.broadcast();
-
-  final StreamController<WechatSubscribeMsgResp>
-      _subscribeMsgRespStreamController =
-      StreamController<WechatSubscribeMsgResp>.broadcast();
-
-  final StreamController<WechatLaunchMiniProgramResp>
-      _launchMiniProgramRespStreamController =
-      StreamController<WechatLaunchMiniProgramResp>.broadcast();
-
-  final StreamController<WechatPayResp> _payRespStreamController =
-      StreamController<WechatPayResp>.broadcast();
-
-  final StreamController<Uint8List> _authGotQrcodeRespStreamController =
-      StreamController<Uint8List>.broadcast();
-
-  final StreamController<String> _authQrcodeScannedRespStreamController =
-      StreamController<String>.broadcast();
-
-  final StreamController<WechatQrauthResp> _authFinishRespStreamController =
-      StreamController<WechatQrauthResp>.broadcast();
+  final StreamController<QrauthResp> _qrauthRespStreamController =
+      StreamController<QrauthResp>.broadcast();
 
   /// 向微信注册应用
   Future<void> registerApp({
@@ -154,91 +132,79 @@ class Wechat {
     );
   }
 
+  /// 微信回调 - 冷启
+  Future<void> handleInitialWXReq() {
+    return _channel.invokeMethod<void>(_METHOD_HANDLEINITIALWXREQ);
+  }
+
   Future<dynamic> _handleMethod(MethodCall call) async {
     switch (call.method) {
+      // onReq
+      case _METHOD_ONLAUNCHFROMWXREQ:
+        _reqStreamController.add(LaunchFromWXReq.fromJson(
+            (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
+        break;
+      case _METHOD_ONSHOWMESSAGEFROMWXREQ:
+        _reqStreamController.add(ShowMessageFromWXReq.fromJson(
+            (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
+        break;
+      // onResp
       case _METHOD_ONAUTHRESP:
-        _authRespStreamController.add(WechatAuthResp.fromJson(
+        _respStreamController.add(AuthResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
       case _METHOD_ONOPENURLRESP:
-        _openUrlRespStreamController.add(WechatSdkResp.fromJson(
+        _respStreamController.add(OpenUrlResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
       case _METHOD_ONSHAREMSGRESP:
-        _shareMsgRespStreamController.add(WechatSdkResp.fromJson(
+        _respStreamController.add(ShareMsgResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
       case _METHOD_ONSUBSCRIBEMSGRESP:
-        _subscribeMsgRespStreamController.add(WechatSubscribeMsgResp.fromJson(
+        _respStreamController.add(SubscribeMsgResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
       case _METHOD_ONLAUNCHMINIPROGRAMRESP:
-        _launchMiniProgramRespStreamController.add(
-            WechatLaunchMiniProgramResp.fromJson(
-                (call.arguments as Map<dynamic, dynamic>)
-                    .cast<String, dynamic>()));
-        break;
-      case _METHOD_ONPAYRESP:
-        _payRespStreamController.add(WechatPayResp.fromJson(
+        _respStreamController.add(LaunchMiniProgramResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
+      case _METHOD_ONOPENCUSTOMERSERVICECHATRESP:
+        _respStreamController.add(OpenCustomerServiceChatResp.fromJson(
+            (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
+        break;
+      case _METHOD_ONPAYRESP:
+        _respStreamController.add(PayResp.fromJson(
+            (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
+        break;
+      // onQrauth
       case _METHOD_ONAUTHGOTQRCODE:
-        _authGotQrcodeRespStreamController
-            .add(call.arguments[_ARGUMENT_KEY_RESULT_IMAGEDATA] as Uint8List);
+        _qrauthRespStreamController.add(GotQrcodeResp.fromJson(
+            (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
       case _METHOD_ONAUTHQRCODESCANNED:
-        _authQrcodeScannedRespStreamController.add('QrcodeScanned');
+        _qrauthRespStreamController.add(const QrcodeScannedResp());
         break;
       case _METHOD_ONAUTHFINISH:
-        _authFinishRespStreamController.add(WechatQrauthResp.fromJson(
+        _qrauthRespStreamController.add(FinishResp.fromJson(
             (call.arguments as Map<dynamic, dynamic>).cast<String, dynamic>()));
         break;
     }
   }
 
-  /// 登录
-  Stream<WechatAuthResp> authResp() {
-    return _authRespStreamController.stream;
+  ///
+  Stream<BaseReq> reqStream() {
+    return _reqStreamController.stream;
   }
 
-  /// 打开浏览器
-  Stream<WechatSdkResp> openUrlResp() {
-    return _openUrlRespStreamController.stream;
+  ///
+  Stream<BaseResp> respStream() {
+    return _respStreamController.stream;
   }
 
-  /// 分享
-  Stream<WechatSdkResp> shareMsgResp() {
-    return _shareMsgRespStreamController.stream;
-  }
-
-  /// 一次性订阅消息
-  Stream<WechatSubscribeMsgResp> subscribeMsgResp() {
-    return _subscribeMsgRespStreamController.stream;
-  }
-
-  /// 打开小程序
-  Stream<WechatLaunchMiniProgramResp> launchMiniProgramResp() {
-    return _launchMiniProgramRespStreamController.stream;
-  }
-
-  /// 支付
-  Stream<WechatPayResp> payResp() {
-    return _payRespStreamController.stream;
-  }
-
-  /// 扫码登录 - 获取二维码
-  Stream<Uint8List> authGotQrcodeResp() {
-    return _authGotQrcodeRespStreamController.stream;
-  }
-
-  /// 扫码登录 - 用户扫描二维码
-  Stream<String> authQrcodeScannedResp() {
-    return _authQrcodeScannedRespStreamController.stream;
-  }
-
-  /// 扫码登录 - 用户点击授权
-  Stream<WechatQrauthResp> authFinishResp() {
-    return _authFinishRespStreamController.stream;
+  /// 扫码登录
+  Stream<QrauthResp> qrauthRespStream() {
+    return _qrauthRespStreamController.stream;
   }
 
   /// 检测微信是否已安装
@@ -249,6 +215,12 @@ class Wechat {
   /// 判断当前微信的版本是否支持OpenApi
   Future<bool> isSupportApi() async {
     return await _channel.invokeMethod<bool>(_METHOD_ISSUPPORTAPI) ?? false;
+  }
+
+  /// 判断当前微信的版本是否支持分享微信状态功能
+  Future<bool> isSupportStateAPI() async {
+    return await _channel.invokeMethod<bool>(_METHOD_ISSUPPORTSTATEAPI) ??
+        false;
   }
 
   /// 打开微信
@@ -269,121 +241,17 @@ class Wechat {
     });
   }
 
-  /// 获取 access_token（UnionID）
-  Future<WechatAccessTokenResp> getAccessTokenUnionID({
-    required String appId,
-    required String appSecret,
-    required String code,
-  }) {
-    return HttpClient()
-        .getUrl(Uri.parse(
-            'https://api.weixin.qq.com/sns/oauth2/access_token?appid=$appId&secret=$appSecret&code=$code&grant_type=authorization_code'))
-        .then((HttpClientRequest request) {
-      return request.close();
-    }).then((HttpClientResponse response) async {
-      if (response.statusCode == HttpStatus.ok) {
-        final String content = await utf8.decodeStream(response);
-        return WechatAccessTokenResp.fromJson(
-            json.decode(content) as Map<String, dynamic>);
-      }
-      throw HttpException(
-          'HttpResponse statusCode: ${response.statusCode}, reasonPhrase: ${response.reasonPhrase}.');
-    });
-  }
-
-  /// 刷新或续期 access_token 使用（UnionID）
-  Future<WechatAccessTokenResp> refreshAccessTokenUnionID({
-    required String appId,
-    required String refreshToken,
-  }) {
-    return HttpClient()
-        .getUrl(Uri.parse(
-            'https://api.weixin.qq.com/sns/oauth2/refresh_token?appid=$appId&grant_type=refresh_token&refresh_token=$refreshToken'))
-        .then((HttpClientRequest request) {
-      return request.close();
-    }).then((HttpClientResponse response) async {
-      if (response.statusCode == HttpStatus.ok) {
-        final String content = await utf8.decodeStream(response);
-        return WechatAccessTokenResp.fromJson(
-            json.decode(content) as Map<String, dynamic>);
-      }
-      throw HttpException(
-          'HttpResponse statusCode: ${response.statusCode}, reasonPhrase: ${response.reasonPhrase}.');
-    });
-  }
-
-  /// 获取用户个人信息（UnionID）
-  Future<WechatUserInfoResp> getUserInfoUnionID({
-    required String openId,
-    required String accessToken,
-  }) {
-    return HttpClient()
-        .getUrl(Uri.parse(
-            'https://api.weixin.qq.com/sns/userinfo?access_token=$accessToken&openid=$openId'))
-        .then((HttpClientRequest request) {
-      return request.close();
-    }).then((HttpClientResponse response) async {
-      if (response.statusCode == HttpStatus.ok) {
-        final String content = await utf8.decodeStream(response);
-        return WechatUserInfoResp.fromJson(
-            json.decode(content) as Map<String, dynamic>);
-      }
-      throw HttpException(
-          'HttpResponse statusCode: ${response.statusCode}, reasonPhrase: ${response.reasonPhrase}.');
-    });
-  }
-
   // --- 微信APP扫码登录
 
-  /// 获取 access_token
-  Future<WechatAccessTokenResp> getAccessToken({
-    required String appId,
-    required String appSecret,
-  }) {
-    return HttpClient()
-        .getUrl(Uri.parse(
-            'https://api.weixin.qq.com/cgi-bin/token?grant_type=client_credential&appid=$appId&secret=$appSecret'))
-        .then((HttpClientRequest request) {
-      return request.close();
-    }).then((HttpClientResponse response) async {
-      if (response.statusCode == HttpStatus.ok) {
-        final String content = await utf8.decodeStream(response);
-        return WechatAccessTokenResp.fromJson(
-            json.decode(content) as Map<String, dynamic>);
-      }
-      throw HttpException(
-          'HttpResponse statusCode: ${response.statusCode}, reasonPhrase: ${response.reasonPhrase}.');
-    });
-  }
-
-  /// 用上面的函数拿到的 access_token，获取 sdk_ticket
-  Future<WechatTicketResp> getTicket({
-    required String accessToken,
-  }) {
-    return HttpClient()
-        .getUrl(Uri.parse(
-            'https://api.weixin.qq.com/cgi-bin/ticket/getticket?access_token=$accessToken&type=2'))
-        .then((HttpClientRequest request) {
-      return request.close();
-    }).then((HttpClientResponse response) async {
-      if (response.statusCode == HttpStatus.ok) {
-        final String content = await utf8.decodeStream(response);
-        return WechatTicketResp.fromJson(
-            json.decode(content) as Map<String, dynamic>);
-      }
-      throw HttpException(
-          'HttpResponse statusCode: ${response.statusCode}, reasonPhrase: ${response.reasonPhrase}.');
-    });
-  }
-
-  /// 用上面函数拿到的 ticket，开始扫码登录
+  /// 调用微信 API 获得 ticket，开始扫码登录
   Future<void> startQrauth({
     required String appId,
     required List<String> scope,
+    required String noncestr,
     required String ticket,
   }) {
-    final String noncestr = const Uuid().v1().toString().replaceAll('-', '');
-    final String timestamp = DateTime.now().millisecondsSinceEpoch.toString();
+    // final String noncestr = const Uuid().v1().toString().replaceAll('-', '');
+    final String timestamp = '${DateTime.now().millisecondsSinceEpoch}';
     final String content =
         'appid=$appId&noncestr=$noncestr&sdk_ticket=$ticket&timestamp=$timestamp';
     final String signature =
@@ -683,6 +551,20 @@ class Wechat {
         _ARGUMENT_KEY_USERNAME: userName,
         if (path != null) _ARGUMENT_KEY_PATH: path,
         _ARGUMENT_KEY_TYPE: type,
+      },
+    );
+  }
+
+  /// 打开微信客服
+  Future<void> openCustomerServiceChat({
+    required String corpId,
+    required String url,
+  }) {
+    return _channel.invokeMethod<void>(
+      _METHOD_OPENCUSTOMERSERVICECHAT,
+      <String, dynamic>{
+        _ARGUMENT_KEY_CORPID: corpId,
+        _ARGUMENT_KEY_URL: url,
       },
     );
   }

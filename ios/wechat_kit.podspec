@@ -4,7 +4,7 @@
 #
 Pod::Spec.new do |s|
   s.name             = 'wechat_kit'
-  s.version          = '2.3.1'
+  s.version          = '3.0.0'
   s.summary          = 'A powerful Flutter plugin allowing developers to auth/share/pay with natvie Android & iOS Wechat SDKs.'
   s.description      = <<-DESC
 A powerful Flutter plugin allowing developers to auth/share/pay with natvie Android & iOS Wechat SDKs.
@@ -18,26 +18,33 @@ A powerful Flutter plugin allowing developers to auth/share/pay with natvie Andr
   s.dependency 'Flutter'
   s.platform = :ios, '8.0'
 
-  # v1.8.7.1
-  s.static_framework = true
-  s.subspec 'vendor' do |sp|
-    sp.dependency 'WechatOpenSDK', '~> 1.8.7.1'
-  end
-
-#  # v1.8.7.1_NoPay
+#  # Pay
 #  s.static_framework = true
 #  s.subspec 'vendor' do |sp|
-#    sp.source_files = 'Libraries/**/*.h'
-#    sp.public_header_files = 'Libraries/**/*.h'
-#    sp.vendored_libraries = 'Libraries/**/*.a'
+#    sp.source_files = 'Libraries/OpenSDK1.9.2/*.h'
+#    sp.public_header_files = 'Libraries/OpenSDK1.9.2/*.h'
+#    sp.vendored_libraries = 'Libraries/OpenSDK1.9.2/*.a'
 #    sp.frameworks = 'CoreGraphics', 'Security', 'WebKit'
 #    sp.libraries = 'c++', 'z', 'sqlite3.0'
 #    sp.pod_target_xcconfig = {
-#        'OTHER_LDFLAGS' => '$(inherited) -ObjC -all_load',
-#        'GCC_PREPROCESSOR_DEFINITIONS' => 'NO_PAY=1'
+#        'OTHER_LDFLAGS' => '$(inherited) -ObjC -all_load'
 #    }
 #  end
 
-  # Flutter.framework does not contain a i386 slice. Only x86_64 simulators are supported.
-  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'VALID_ARCHS[sdk=iphonesimulator*]' => 'x86_64' }
+  # NoPay
+  s.static_framework = true
+  s.subspec 'vendor' do |sp|
+    sp.source_files = 'Libraries/OpenSDK1.9.2_NoPay/*.h'
+    sp.public_header_files = 'Libraries/OpenSDK1.9.2_NoPay/*.h'
+    sp.vendored_libraries = 'Libraries/OpenSDK1.9.2_NoPay/*.a'
+    sp.frameworks = 'CoreGraphics', 'Security', 'WebKit'
+    sp.libraries = 'c++', 'z', 'sqlite3.0'
+    sp.pod_target_xcconfig = {
+        'OTHER_LDFLAGS' => '$(inherited) -ObjC -all_load',
+        'GCC_PREPROCESSOR_DEFINITIONS' => 'NO_PAY=1'
+    }
+  end
+
+  # Flutter.framework does not contain a i386 slice.
+  s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES', 'EXCLUDED_ARCHS[sdk=iphonesimulator*]' => 'i386' }
 end

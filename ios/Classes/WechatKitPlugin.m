@@ -3,9 +3,11 @@
 #import <WXApi.h>
 #import <WechatAuthSDK.h>
 #else
-#import <WechatOpenSDK/WXApi.h>
-#import <WechatOpenSDK/WechatAuthSDK.h>
+#import <WXApi.h>
+#import <WechatAuthSDK.h>
 #endif
+
+typedef void(^WechatKitWXReqRunnable)(void);
 
 @interface WechatKitPlugin () <WXApiDelegate, WechatAuthAPIDelegate>
 
@@ -14,6 +16,9 @@
 @implementation WechatKitPlugin {
     FlutterMethodChannel *_channel;
     WechatAuthSDK *_qrauth;
+    BOOL _isRunning;
+    BOOL _handleInitialWXReqFlag;
+    WechatKitWXReqRunnable _initialWXReqRunnable;
 }
 
 + (void)registerWithRegistrar:(NSObject<FlutterPluginRegistrar> *)registrar {
@@ -26,8 +31,10 @@
 }
 
 static NSString *const METHOD_REGISTERAPP = @"registerApp";
+static NSString *const METHOD_HANDLEINITIALWXREQ = @"handleInitialWXReq";
 static NSString *const METHOD_ISINSTALLED = @"isInstalled";
 static NSString *const METHOD_ISSUPPORTAPI = @"isSupportApi";
+static NSString *const METHOD_ISSUPPORTSTATEAPI = @"isSupportStateAPI";
 static NSString *const METHOD_OPENWECHAT = @"openWechat";
 static NSString *const METHOD_AUTH = @"auth";
 static NSString *const METHOD_STARTQRAUTH = @"startQrauth";
@@ -44,16 +51,20 @@ static NSString *const METHOD_SHAREWEBPAGE = @"shareWebpage";
 static NSString *const METHOD_SHAREMINIPROGRAM = @"shareMiniProgram";
 static NSString *const METHOD_SUBSCRIBEMSG = @"subscribeMsg";
 static NSString *const METHOD_LAUNCHMINIPROGRAM = @"launchMiniProgram";
+static NSString *const METHOD_OPENCUSTOMERSERVICECHAT = @"openCustomerServiceChat";
 #ifndef NO_PAY
 static NSString *const METHOD_PAY = @"pay";
 #endif
+
+static NSString *const METHOD_ONLAUNCHFROMWXREQ = @"onLaunchFromWXReq";
+static NSString *const METHOD_ONSHOWMESSAGEFROMWXREQ = @"onShowMessageFromWXReq";
 
 static NSString *const METHOD_ONAUTHRESP = @"onAuthResp";
 static NSString *const METHOD_ONOPENURLRESP = @"onOpenUrlResp";
 static NSString *const METHOD_ONSHAREMSGRESP = @"onShareMsgResp";
 static NSString *const METHOD_ONSUBSCRIBEMSGRESP = @"onSubscribeMsgResp";
-static NSString *const METHOD_ONLAUNCHMINIPROGRAMRESP =
-    @"onLaunchMiniProgramResp";
+static NSString *const METHOD_ONLAUNCHMINIPROGRAMRESP = @"onLaunchMiniProgramResp";
+static NSString *const METHOD_ONOPENCUSTOMERSERVICECHATRESP = @"onOpenCustomerServiceChatResp";
 #ifndef NO_PAY
 static NSString *const METHOD_ONPAYRESP = @"onPayResp";
 #endif
@@ -97,6 +108,7 @@ static NSString *const ARGUMENT_KEY_TYPE = @"type";
 static NSString *const ARGUMENT_KEY_DISABLEFORWARD = @"disableForward";
 static NSString *const ARGUMENT_KEY_TEMPLATEID = @"templateId";
 static NSString *const ARGUMENT_KEY_RESERVED = @"reserved";
+static NSString *const ARGUMENT_KEY_CORPID = @"corpId";
 #ifndef NO_PAY
 static NSString *const ARGUMENT_KEY_PARTNERID = @"partnerId";
 static NSString *const ARGUMENT_KEY_PREPAYID = @"prepayId";
@@ -118,6 +130,8 @@ static NSString *const ARGUMENT_KEY_RESULT_ACTION = @"action";
 static NSString *const ARGUMENT_KEY_RESULT_RESERVED = @"reserved";
 static NSString *const ARGUMENT_KEY_RESULT_OPENID = @"openId";
 static NSString *const ARGUMENT_KEY_RESULT_EXTMSG = @"extMsg";
+static NSString *const ARGUMENT_KEY_RESULT_MESSAGEACTION = @"messageAction";
+static NSString *const ARGUMENT_KEY_RESULT_MESSAGEEXT = @"messageExt";
 static NSString *const ARGUMENT_KEY_RESULT_RETURNKEY = @"returnKey";
 static NSString *const ARGUMENT_KEY_RESULT_IMAGEDATA = @"imageData";
 static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
@@ -128,6 +142,8 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
         _channel = channel;
         _qrauth = [[WechatAuthSDK alloc] init];
         _qrauth.delegate = self;
+        _isRunning = NO;
+        _handleInitialWXReqFlag = NO;
     }
     return self;
 }
@@ -138,11 +154,25 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
         NSString *appId = call.arguments[ARGUMENT_KEY_APPID];
         NSString *universalLink = call.arguments[ARGUMENT_KEY_UNIVERSALLINK];
         [WXApi registerApp:appId universalLink:universalLink];
+        _isRunning = YES;
         result(nil);
+    } else if ([METHOD_HANDLEINITIALWXREQ isEqualToString:call.method]) {
+        if (!_handleInitialWXReqFlag) {
+            _handleInitialWXReqFlag = YES;
+            if (_initialWXReqRunnable != nil) {
+                _initialWXReqRunnable();
+                _initialWXReqRunnable = nil;
+            }
+            result(nil);
+        } else {
+            result([FlutterError errorWithCode:@"FAILED" message:nil details:nil]);
+        }
     } else if ([METHOD_ISINSTALLED isEqualToString:call.method]) {
         result([NSNumber numberWithBool:[WXApi isWXAppInstalled]]);
     } else if ([METHOD_ISSUPPORTAPI isEqualToString:call.method]) {
         result([NSNumber numberWithBool:[WXApi isWXAppSupportApi]]);
+    } else if ([METHOD_ISSUPPORTSTATEAPI isEqualToString:call.method]) {
+        result([NSNumber numberWithBool:[WXApi isWXAppSupportStateAPI]]);
     } else if ([METHOD_OPENWECHAT isEqualToString:call.method]) {
         result([NSNumber numberWithBool:[WXApi openWXApp]]);
     } else if ([METHOD_AUTH isEqualToString:call.method]) {
@@ -168,6 +198,8 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
         [self handleSubscribeMsgCall:call result:result];
     } else if ([METHOD_LAUNCHMINIPROGRAM isEqualToString:call.method]) {
         [self handleLaunchMiniProgramCall:call result:result];
+    } else if ([METHOD_OPENCUSTOMERSERVICECHAT isEqualToString:call.method]) {
+        [self handleOpenCustomerServiceChatCall: call result:result];
     }
 #ifndef NO_PAY
     else if ([METHOD_PAY isEqualToString:call.method]) {
@@ -369,6 +401,18 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
     result(nil);
 }
 
+- (void)handleOpenCustomerServiceChatCall:(FlutterMethodCall *)call
+                                   result:(FlutterResult)result {
+    WXOpenCustomerServiceReq *req = [[WXOpenCustomerServiceReq alloc] init];
+    req.corpid = call.arguments[ARGUMENT_KEY_CORPID];
+    req.url = call.arguments[ARGUMENT_KEY_URL];
+    [WXApi sendReq:req
+        completion:^(BOOL success){
+            // do nothing
+        }];
+    result(nil);
+}
+
 #ifndef NO_PAY
 - (void)handlePayCall:(FlutterMethodCall *)call result:(FlutterResult)result {
     PayReq *req = [[PayReq alloc] init];
@@ -416,6 +460,39 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
 #pragma mark - WXApiDelegate
 
 - (void)onReq:(BaseReq *)req {
+    NSMutableDictionary *dictionary = [NSMutableDictionary dictionary];
+    [dictionary setValue: req.openID forKey:ARGUMENT_KEY_RESULT_OPENID];
+    if ([req isKindOfClass:[LaunchFromWXReq class]]) {
+        LaunchFromWXReq *launchFromWXReq = (LaunchFromWXReq *)req;
+        [dictionary setValue:launchFromWXReq.message.messageAction forKey:ARGUMENT_KEY_RESULT_MESSAGEACTION];
+        [dictionary setValue:launchFromWXReq.message.messageExt forKey:ARGUMENT_KEY_RESULT_MESSAGEEXT];
+        [dictionary setValue:launchFromWXReq.lang forKey:ARGUMENT_KEY_RESULT_LANG];
+        [dictionary setValue:launchFromWXReq.country forKey:ARGUMENT_KEY_RESULT_COUNTRY];
+        if (_isRunning) {
+            [_channel invokeMethod:METHOD_ONLAUNCHFROMWXREQ arguments:dictionary];
+        } else {
+            __weak typeof(self) weakSelf = self;
+            _initialWXReqRunnable = ^() {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                [strongSelf -> _channel invokeMethod:METHOD_ONLAUNCHFROMWXREQ arguments:dictionary];
+            };
+        }
+    } else if ([req isKindOfClass:[ShowMessageFromWXReq class]]) {
+        ShowMessageFromWXReq *showMessageFromWXReq = (ShowMessageFromWXReq *)req;
+        [dictionary setValue:showMessageFromWXReq.message.messageAction forKey:ARGUMENT_KEY_RESULT_MESSAGEACTION];
+        [dictionary setValue:showMessageFromWXReq.message.messageExt forKey:ARGUMENT_KEY_RESULT_MESSAGEEXT];
+        [dictionary setValue:showMessageFromWXReq.lang forKey:ARGUMENT_KEY_RESULT_LANG];
+        [dictionary setValue:showMessageFromWXReq.country forKey:ARGUMENT_KEY_RESULT_COUNTRY];
+        if (_isRunning) {
+            [_channel invokeMethod:METHOD_ONSHOWMESSAGEFROMWXREQ arguments:dictionary];
+        } else {
+            __weak typeof(self) weakSelf = self;
+            _initialWXReqRunnable = ^() {
+                __strong typeof(weakSelf) strongSelf = weakSelf;
+                [strongSelf -> _channel invokeMethod:METHOD_ONSHOWMESSAGEFROMWXREQ arguments:dictionary];
+            };
+        }
+    }
 }
 
 - (void)onResp:(BaseResp *)resp {
@@ -467,6 +544,8 @@ static NSString *const ARGUMENT_KEY_RESULT_AUTHCODE = @"authCode";
                           forKey:ARGUMENT_KEY_RESULT_EXTMSG];
         }
         [_channel invokeMethod:METHOD_ONLAUNCHMINIPROGRAMRESP arguments:dictionary];
+    } else if ([resp isKindOfClass:[WXOpenCustomerServiceResp class]]) {
+        [_channel invokeMethod:METHOD_ONOPENCUSTOMERSERVICECHATRESP arguments:dictionary];
     } else {
 #ifndef NO_PAY
         if ([resp isKindOfClass:[PayResp class]]) {

@@ -22,8 +22,11 @@ import com.tencent.mm.opensdk.modelbiz.OpenRankList;
 import com.tencent.mm.opensdk.modelbiz.OpenWebview;
 import com.tencent.mm.opensdk.modelbiz.SubscribeMessage;
 import com.tencent.mm.opensdk.modelbiz.WXLaunchMiniProgram;
+import com.tencent.mm.opensdk.modelbiz.WXOpenCustomerServiceChat;
+import com.tencent.mm.opensdk.modelmsg.LaunchFromWX;
 import com.tencent.mm.opensdk.modelmsg.SendAuth;
 import com.tencent.mm.opensdk.modelmsg.SendMessageToWX;
+import com.tencent.mm.opensdk.modelmsg.ShowMessageFromWX;
 import com.tencent.mm.opensdk.modelmsg.WXEmojiObject;
 import com.tencent.mm.opensdk.modelmsg.WXFileObject;
 import com.tencent.mm.opensdk.modelmsg.WXImageObject;
@@ -51,17 +54,20 @@ import io.flutter.plugin.common.MethodCall;
 import io.flutter.plugin.common.MethodChannel;
 import io.flutter.plugin.common.MethodChannel.MethodCallHandler;
 import io.flutter.plugin.common.MethodChannel.Result;
+import io.flutter.plugin.common.PluginRegistry;
 
 /**
  * WechatKitPlugin
  */
-public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCallHandler {
+public final class WechatKitPlugin implements FlutterPlugin, ActivityAware, PluginRegistry.NewIntentListener, MethodCallHandler {
 
     //
 
     private static final String METHOD_REGISTERAPP = "registerApp";
+    private static final String METHOD_HANDLEINITIALWXREQ = "handleInitialWXReq";
     private static final String METHOD_ISINSTALLED = "isInstalled";
     private static final String METHOD_ISSUPPORTAPI = "isSupportApi";
+    private static final String METHOD_ISSUPPORTSTATEAPI = "isSupportStateAPI";
     private static final String METHOD_OPENWECHAT = "openWechat";
     private static final String METHOD_AUTH = "auth";
     private static final String METHOD_STARTQRAUTH = "startQrauth";
@@ -78,18 +84,22 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     private static final String METHOD_SHAREMINIPROGRAM = "shareMiniProgram";
     private static final String METHOD_SUBSCRIBEMSG = "subscribeMsg";
     private static final String METHOD_LAUNCHMINIPROGRAM = "launchMiniProgram";
+    private static final String METHOD_OPENCUSTOMERSERVICECHAT = "openCustomerServiceChat";
     private static final String METHOD_PAY = "pay";
+
+    private static final String METHOD_ONLAUNCHFROMWXREQ = "onLaunchFromWXReq";
+    private static final String METHOD_ONSHOWMESSAGEFROMWXREQ = "onShowMessageFromWXReq";
 
     private static final String METHOD_ONAUTHRESP = "onAuthResp";
     private static final String METHOD_ONOPENURLRESP = "onOpenUrlResp";
     private static final String METHOD_ONSHAREMSGRESP = "onShareMsgResp";
     private static final String METHOD_ONSUBSCRIBEMSGRESP = "onSubscribeMsgResp";
     private static final String METHOD_ONLAUNCHMINIPROGRAMRESP = "onLaunchMiniProgramResp";
+    private static final String METHOD_ONOPENCUSTOMERSERVICECHATRESP = "onOpenCustomerServiceChatResp";
     private static final String METHOD_ONPAYRESP = "onPayResp";
     private static final String METHOD_ONAUTHGOTQRCODE = "onAuthGotQrcode";
     private static final String METHOD_ONAUTHQRCODESCANNED = "onAuthQrcodeScanned";
     private static final String METHOD_ONAUTHFINISH = "onAuthFinish";
-
 
     private static final String ARGUMENT_KEY_APPID = "appId";
     //    private static final String ARGUMENT_KEY_UNIVERSALLINK = "universalLink";
@@ -126,10 +136,9 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     private static final String ARGUMENT_KEY_DISABLEFORWARD = "disableForward";
     private static final String ARGUMENT_KEY_TEMPLATEID = "templateId";
     private static final String ARGUMENT_KEY_RESERVED = "reserved";
+    private static final String ARGUMENT_KEY_CORPID = "corpId";
     private static final String ARGUMENT_KEY_PARTNERID = "partnerId";
     private static final String ARGUMENT_KEY_PREPAYID = "prepayId";
-    //    private static final String ARGUMENT_KEY_NONCESTR = "noncestr";
-    //    private static final String ARGUMENT_KEY_TIMESTAMP = "timestamp";
     private static final String ARGUMENT_KEY_PACKAGE = "package";
     private static final String ARGUMENT_KEY_SIGN = "sign";
 
@@ -145,6 +154,8 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     private static final String ARGUMENT_KEY_RESULT_RESERVED = "reserved";
     private static final String ARGUMENT_KEY_RESULT_OPENID = "openId";
     private static final String ARGUMENT_KEY_RESULT_EXTMSG = "extMsg";
+    private static final String ARGUMENT_KEY_RESULT_MESSAGEACTION = "messageAction";
+    private static final String ARGUMENT_KEY_RESULT_MESSAGEEXT = "messageExt";
     private static final String ARGUMENT_KEY_RESULT_RETURNKEY = "returnKey";
     private static final String ARGUMENT_KEY_RESULT_IMAGEDATA = "imageData";
     private static final String ARGUMENT_KEY_RESULT_AUTHCODE = "authCode";
@@ -155,13 +166,12 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     /// when the Flutter Engine is detached from the Activity
     private MethodChannel channel;
     private Context applicationContext;
-    private Activity activity;
-
-    private final AtomicBoolean register = new AtomicBoolean(false);
+    private ActivityPluginBinding activityPluginBinding;
 
     private final IDiffDevOAuth qrauth = DiffDevOAuthFactory.getDiffDevOAuth();
 
     private IWXAPI iwxapi;
+    private AtomicBoolean handleInitialWXReqFlag = new AtomicBoolean(false);
 
     // --- FlutterPlugin
 
@@ -186,39 +196,80 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
 
     @Override
     public void onAttachedToActivity(@NonNull ActivityPluginBinding binding) {
-        activity = binding.getActivity();
-        if (register.compareAndSet(false, true)) {
-            WechatReceiver.registerReceiver(activity, wechatReceiver);
-        }
+        activityPluginBinding = binding;
+        activityPluginBinding.addOnNewIntentListener(this);
     }
 
-    private final WechatReceiver wechatReceiver = new WechatReceiver() {
-        @Override
-        public void handleIntent(Intent intent) {
+    @Override
+    public void onDetachedFromActivityForConfigChanges() {
+        onDetachedFromActivity();
+    }
+
+    @Override
+    public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
+        onAttachedToActivity(binding);
+    }
+
+    @Override
+    public void onDetachedFromActivity() {
+        qrauth.removeAllListeners();
+        activityPluginBinding = null;
+    }
+
+    // --- NewIntentListener
+
+    @Override
+    public boolean onNewIntent(Intent intent) {
+        final Intent resp = WechatCallbackActivity.extraCallback(intent);
+        if (resp != null) {
             if (iwxapi != null) {
-                iwxapi.handleIntent(intent, iwxapiEventHandler);
+                iwxapi.handleIntent(resp, iwxapiEventHandler);
             }
+            return true;
         }
-    };
+        return false;
+    }
 
     private final IWXAPIEventHandler iwxapiEventHandler = new IWXAPIEventHandler() {
         @Override
         public void onReq(BaseReq req) {
-
+            final Map<String, Object> map = new HashMap<>();
+            map.put(ARGUMENT_KEY_RESULT_OPENID, req.openId);
+            if (req instanceof LaunchFromWX.Req) {
+                LaunchFromWX.Req launchFromWXReq = (LaunchFromWX.Req) req;
+                map.put(ARGUMENT_KEY_RESULT_MESSAGEACTION, launchFromWXReq.messageAction);
+                map.put(ARGUMENT_KEY_RESULT_MESSAGEEXT, launchFromWXReq.messageExt);
+                map.put(ARGUMENT_KEY_RESULT_LANG, launchFromWXReq.lang);
+                map.put(ARGUMENT_KEY_RESULT_COUNTRY, launchFromWXReq.country);
+                if (channel != null) {
+                    channel.invokeMethod(METHOD_ONLAUNCHFROMWXREQ, map);
+                }
+            } else if (req instanceof ShowMessageFromWX.Req) {
+                ShowMessageFromWX.Req showMessageFromWXReq = (ShowMessageFromWX.Req) req;
+                map.put(ARGUMENT_KEY_RESULT_MESSAGEACTION, showMessageFromWXReq.message.messageAction);
+                map.put(ARGUMENT_KEY_RESULT_MESSAGEEXT, showMessageFromWXReq.message.messageExt);
+                map.put(ARGUMENT_KEY_RESULT_LANG, showMessageFromWXReq.lang);
+                map.put(ARGUMENT_KEY_RESULT_COUNTRY, showMessageFromWXReq.country);
+                if (channel != null) {
+                    channel.invokeMethod(METHOD_ONSHOWMESSAGEFROMWXREQ, map);
+                }
+            }
         }
 
         @Override
         public void onResp(BaseResp resp) {
-            Map<String, Object> map = new HashMap<>();
+            final Map<String, Object> map = new HashMap<>();
             map.put(ARGUMENT_KEY_RESULT_ERRORCODE, resp.errCode);
             map.put(ARGUMENT_KEY_RESULT_ERRORMSG, resp.errStr);
             if (resp instanceof SendAuth.Resp) {
                 // 授权
-                SendAuth.Resp authResp = (SendAuth.Resp) resp;
-                map.put(ARGUMENT_KEY_RESULT_CODE, authResp.code);
-                map.put(ARGUMENT_KEY_RESULT_STATE, authResp.state);
-                map.put(ARGUMENT_KEY_RESULT_LANG, authResp.lang);
-                map.put(ARGUMENT_KEY_RESULT_COUNTRY, authResp.country);
+                if (resp.errCode == BaseResp.ErrCode.ERR_OK) {
+                    SendAuth.Resp authResp = (SendAuth.Resp) resp;
+                    map.put(ARGUMENT_KEY_RESULT_CODE, authResp.code);
+                    map.put(ARGUMENT_KEY_RESULT_STATE, authResp.state);
+                    map.put(ARGUMENT_KEY_RESULT_LANG, authResp.lang);
+                    map.put(ARGUMENT_KEY_RESULT_COUNTRY, authResp.country);
+                }
                 if (channel != null) {
                     channel.invokeMethod(METHOD_ONAUTHRESP, map);
                 }
@@ -234,26 +285,36 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
                 }
             } else if (resp instanceof SubscribeMessage.Resp) {
                 // 一次性订阅消息
-                SubscribeMessage.Resp subscribeMsgResp = (SubscribeMessage.Resp) resp;
-                map.put(ARGUMENT_KEY_RESULT_TEMPLATEID, subscribeMsgResp.templateID);
-                map.put(ARGUMENT_KEY_RESULT_SCENE, subscribeMsgResp.scene);
-                map.put(ARGUMENT_KEY_RESULT_ACTION, subscribeMsgResp.action);
-                map.put(ARGUMENT_KEY_RESULT_RESERVED, subscribeMsgResp.reserved);
-                map.put(ARGUMENT_KEY_RESULT_OPENID, subscribeMsgResp.openId);
+                if (resp.errCode == BaseResp.ErrCode.ERR_OK) {
+                    SubscribeMessage.Resp subscribeMsgResp = (SubscribeMessage.Resp) resp;
+                    map.put(ARGUMENT_KEY_RESULT_TEMPLATEID, subscribeMsgResp.templateID);
+                    map.put(ARGUMENT_KEY_RESULT_SCENE, subscribeMsgResp.scene);
+                    map.put(ARGUMENT_KEY_RESULT_ACTION, subscribeMsgResp.action);
+                    map.put(ARGUMENT_KEY_RESULT_RESERVED, subscribeMsgResp.reserved);
+                    map.put(ARGUMENT_KEY_RESULT_OPENID, subscribeMsgResp.openId);
+                }
                 if (channel != null) {
                     channel.invokeMethod(METHOD_ONSUBSCRIBEMSGRESP, map);
                 }
             } else if (resp instanceof WXLaunchMiniProgram.Resp) {
                 // 打开小程序
-                WXLaunchMiniProgram.Resp launchMiniProgramResp = (WXLaunchMiniProgram.Resp) resp;
-                map.put(ARGUMENT_KEY_RESULT_EXTMSG, launchMiniProgramResp.extMsg);
+                if (resp.errCode == BaseResp.ErrCode.ERR_OK) {
+                    WXLaunchMiniProgram.Resp launchMiniProgramResp = (WXLaunchMiniProgram.Resp) resp;
+                    map.put(ARGUMENT_KEY_RESULT_EXTMSG, launchMiniProgramResp.extMsg);
+                }
                 if (channel != null) {
                     channel.invokeMethod(METHOD_ONLAUNCHMINIPROGRAMRESP, map);
                 }
+            } else if (resp instanceof WXOpenCustomerServiceChat.Resp) {
+                if (channel != null) {
+                    channel.invokeMethod(METHOD_ONOPENCUSTOMERSERVICECHATRESP, map);
+                }
             } else if (resp instanceof PayResp) {
                 // 支付
-                PayResp payResp = (PayResp) resp;
-                map.put(ARGUMENT_KEY_RESULT_RETURNKEY, payResp.returnKey);
+                if (resp.errCode == BaseResp.ErrCode.ERR_OK) {
+                    PayResp payResp = (PayResp) resp;
+                    map.put(ARGUMENT_KEY_RESULT_RETURNKEY, payResp.returnKey);
+                }
                 if (channel != null) {
                     channel.invokeMethod(METHOD_ONPAYRESP, map);
                 }
@@ -261,35 +322,20 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
         }
     };
 
-    @Override
-    public void onDetachedFromActivityForConfigChanges() {
-        onDetachedFromActivity();
-    }
-
-    @Override
-    public void onReattachedToActivityForConfigChanges(@NonNull ActivityPluginBinding binding) {
-        onAttachedToActivity(binding);
-    }
-
-    @Override
-    public void onDetachedFromActivity() {
-        if (register.compareAndSet(true, false)) {
-            WechatReceiver.unregisterReceiver(activity, wechatReceiver);
-        }
-        qrauth.removeAllListeners();
-        activity = null;
-    }
-
     // --- MethodCallHandler
 
     @Override
     public void onMethodCall(@NonNull MethodCall call, @NonNull Result result) {
         if (METHOD_REGISTERAPP.equals(call.method)) {
             registerApp(call, result);
+        } else if (METHOD_HANDLEINITIALWXREQ.equals(call.method)) {
+            handleInitialWXReq(call, result);
         } else if (METHOD_ISINSTALLED.equals(call.method)) {
             result.success(iwxapi != null && iwxapi.isWXAppInstalled());
         } else if (METHOD_ISSUPPORTAPI.equals(call.method)) {
             result.success(iwxapi != null && iwxapi.getWXAppSupportAPI() >= Build.OPENID_SUPPORTED_SDK_INT);
+        } else if (METHOD_ISSUPPORTSTATEAPI.equals(call.method)) {
+            result.success(iwxapi != null && iwxapi.getWXAppSupportAPI() >= Build.SUPPORTED_SEND_TO_STATUS);
         } else if (METHOD_OPENWECHAT.equals(call.method)) {
             result.success(iwxapi != null && iwxapi.openWXApp());
         } else if (METHOD_AUTH.equals(call.method)) {
@@ -315,6 +361,8 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
             handleSubscribeMsgCall(call, result);
         } else if (METHOD_LAUNCHMINIPROGRAM.equals(call.method)) {
             handleLaunchMiniProgramCall(call, result);
+        } else if (METHOD_OPENCUSTOMERSERVICECHAT.equals(call.method)) {
+            handleOpenCustomerServiceChat(call, result);
         } else if (METHOD_PAY.equals(call.method)) {
             handlePayCall(call, result);
         } else {
@@ -330,8 +378,25 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
         result.success(null);
     }
 
+    private void handleInitialWXReq(@NonNull MethodCall call, @NonNull Result result) {
+        if (handleInitialWXReqFlag.compareAndSet(false, true)) {
+            final Activity activity = activityPluginBinding != null ? activityPluginBinding.getActivity() : null;
+            if (activity != null) {
+                final Intent resp = WechatCallbackActivity.extraCallback(activity.getIntent());
+                if (resp != null) {
+                    if (iwxapi != null) {
+                        iwxapi.handleIntent(resp, iwxapiEventHandler);
+                    }
+                }
+            }
+            result.success(null);
+        } else {
+            result.error("FAILED", null, null);
+        }
+    }
+
     private void handleAuthCall(@NonNull MethodCall call, @NonNull Result result) {
-        SendAuth.Req req = new SendAuth.Req();
+        final SendAuth.Req req = new SendAuth.Req();
         req.scope = call.argument(ARGUMENT_KEY_SCOPE);
         req.state = call.argument(ARGUMENT_KEY_STATE);
         if (iwxapi != null) {
@@ -342,11 +407,11 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
 
     private void handleQRAuthCall(@NonNull MethodCall call, @NonNull Result result) {
         if (METHOD_STARTQRAUTH.equals(call.method)) {
-            String appId = call.argument(ARGUMENT_KEY_APPID);
-            String scope = call.argument(ARGUMENT_KEY_SCOPE);
-            String noncestr = call.argument(ARGUMENT_KEY_NONCESTR);
-            String timestamp = call.argument(ARGUMENT_KEY_TIMESTAMP);
-            String signature = call.argument(ARGUMENT_KEY_SIGNATURE);
+            final String appId = call.argument(ARGUMENT_KEY_APPID);
+            final String scope = call.argument(ARGUMENT_KEY_SCOPE);
+            final String noncestr = call.argument(ARGUMENT_KEY_NONCESTR);
+            final String timestamp = call.argument(ARGUMENT_KEY_TIMESTAMP);
+            final String signature = call.argument(ARGUMENT_KEY_SIGNATURE);
             qrauth.auth(appId, scope, noncestr, timestamp, signature, qrauthListener);
         } else if (METHOD_STOPQRAUTH.equals(call.method)) {
             qrauth.stopAuth();
@@ -357,7 +422,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     private final OAuthListener qrauthListener = new OAuthListener() {
         @Override
         public void onAuthGotQrcode(@Deprecated String qrcodeImgPath, byte[] imgBuf) {
-            Map<String, Object> map = new HashMap<>();
+            final Map<String, Object> map = new HashMap<>();
             map.put(ARGUMENT_KEY_RESULT_IMAGEDATA, imgBuf);
             if (channel != null) {
                 channel.invokeMethod(METHOD_ONAUTHGOTQRCODE, map);
@@ -373,7 +438,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
 
         @Override
         public void onAuthFinish(OAuthErrCode errCode, String authCode) {
-            Map<String, Object> map = new HashMap<>();
+            final Map<String, Object> map = new HashMap<>();
             map.put(ARGUMENT_KEY_RESULT_ERRORCODE, errCode.getCode());
             map.put(ARGUMENT_KEY_RESULT_AUTHCODE, authCode);
             if (channel != null) {
@@ -383,7 +448,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     };
 
     private void handleOpenUrlCall(@NonNull MethodCall call, @NonNull Result result) {
-        OpenWebview.Req req = new OpenWebview.Req();
+        final OpenWebview.Req req = new OpenWebview.Req();
         req.url = call.argument(ARGUMENT_KEY_URL);
         if (iwxapi != null) {
             iwxapi.sendReq(req);
@@ -392,7 +457,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     }
 
     private void handleOpenRankListCall(@NonNull MethodCall call, @NonNull Result result) {
-        OpenRankList.Req req = new OpenRankList.Req();
+        final OpenRankList.Req req = new OpenRankList.Req();
         if (iwxapi != null) {
             iwxapi.sendReq(req);
         }
@@ -400,7 +465,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     }
 
     private void handleShareTextCall(@NonNull MethodCall call, @NonNull Result result) {
-        SendMessageToWX.Req req = new SendMessageToWX.Req();
+        final SendMessageToWX.Req req = new SendMessageToWX.Req();
         req.transaction = call.method + ": " + System.currentTimeMillis();
         req.scene = call.argument(ARGUMENT_KEY_SCENE);
         String text = call.argument(ARGUMENT_KEY_TEXT);
@@ -417,15 +482,15 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     }
 
     private void handleShareMediaCall(@NonNull MethodCall call, @NonNull Result result) {
-        SendMessageToWX.Req req = new SendMessageToWX.Req();
+        final SendMessageToWX.Req req = new SendMessageToWX.Req();
         req.transaction = call.method + ": " + System.currentTimeMillis();
         req.scene = call.argument(ARGUMENT_KEY_SCENE);
-        WXMediaMessage message = new WXMediaMessage();
+        final WXMediaMessage message = new WXMediaMessage();
         message.title = call.argument(ARGUMENT_KEY_TITLE);
         message.description = call.argument(ARGUMENT_KEY_DESCRIPTION);
         message.thumbData = call.argument(ARGUMENT_KEY_THUMBDATA);
         if (METHOD_SHAREIMAGE.equals(call.method)) {
-            WXImageObject object = new WXImageObject();
+            final WXImageObject object = new WXImageObject();
             if (call.hasArgument(ARGUMENT_KEY_IMAGEDATA)) {
                 object.imageData = call.argument(ARGUMENT_KEY_IMAGEDATA);
             } else if (call.hasArgument(ARGUMENT_KEY_IMAGEURI)) {
@@ -434,7 +499,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
             }
             message.mediaObject = object;
         } else if (METHOD_SHAREFILE.equals(call.method)) {
-            WXFileObject object = new WXFileObject();
+            final WXFileObject object = new WXFileObject();
             if (call.hasArgument(ARGUMENT_KEY_FILEDATA)) {
                 object.fileData = call.argument(ARGUMENT_KEY_FILEDATA);
             } else if (call.hasArgument(ARGUMENT_KEY_FILEURI)) {
@@ -444,7 +509,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
 //            String fileExtension = call.argument(ARGUMENT_KEY_FILEEXTENSION);
             message.mediaObject = object;
         } else if (METHOD_SHAREEMOJI.equals(call.method)) {
-            WXEmojiObject object = new WXEmojiObject();
+            final WXEmojiObject object = new WXEmojiObject();
             if (call.hasArgument(ARGUMENT_KEY_EMOJIDATA)) {
                 object.emojiData = call.argument(ARGUMENT_KEY_EMOJIDATA);
             } else if (call.hasArgument(ARGUMENT_KEY_EMOJIURI)) {
@@ -453,23 +518,23 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
             }
             message.mediaObject = object;
         } else if (METHOD_SHAREMUSIC.equals(call.method)) {
-            WXMusicObject object = new WXMusicObject();
+            final WXMusicObject object = new WXMusicObject();
             object.musicUrl = call.argument(ARGUMENT_KEY_MUSICURL);
             object.musicDataUrl = call.argument(ARGUMENT_KEY_MUSICDATAURL);
             object.musicLowBandUrl = call.argument(ARGUMENT_KEY_MUSICLOWBANDURL);
             object.musicLowBandDataUrl = call.argument(ARGUMENT_KEY_MUSICLOWBANDDATAURL);
             message.mediaObject = object;
         } else if (METHOD_SHAREVIDEO.equals(call.method)) {
-            WXVideoObject object = new WXVideoObject();
+            final WXVideoObject object = new WXVideoObject();
             object.videoUrl = call.argument(ARGUMENT_KEY_VIDEOURL);
             object.videoLowBandUrl = call.argument(ARGUMENT_KEY_VIDEOLOWBANDURL);
             message.mediaObject = object;
         } else if (METHOD_SHAREWEBPAGE.equals(call.method)) {
-            WXWebpageObject object = new WXWebpageObject();
+            final WXWebpageObject object = new WXWebpageObject();
             object.webpageUrl = call.argument(ARGUMENT_KEY_WEBPAGEURL);
             message.mediaObject = object;
         } else if (METHOD_SHAREMINIPROGRAM.equals(call.method)) {
-            WXMiniProgramObject object = new WXMiniProgramObject();
+            final WXMiniProgramObject object = new WXMiniProgramObject();
             object.webpageUrl = call.argument(ARGUMENT_KEY_WEBPAGEURL);
             object.userName = call.argument(ARGUMENT_KEY_USERNAME);
             object.path = call.argument(ARGUMENT_KEY_PATH);
@@ -491,7 +556,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     }
 
     private void handleSubscribeMsgCall(@NonNull MethodCall call, @NonNull Result result) {
-        SubscribeMessage.Req req = new SubscribeMessage.Req();
+        final SubscribeMessage.Req req = new SubscribeMessage.Req();
         req.scene = call.argument(ARGUMENT_KEY_SCENE);
         req.templateID = call.argument(ARGUMENT_KEY_TEMPLATEID);
         req.reserved = call.argument(ARGUMENT_KEY_RESERVED);
@@ -502,7 +567,7 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
     }
 
     private void handleLaunchMiniProgramCall(@NonNull MethodCall call, @NonNull Result result) {
-        WXLaunchMiniProgram.Req req = new WXLaunchMiniProgram.Req();
+        final WXLaunchMiniProgram.Req req = new WXLaunchMiniProgram.Req();
         req.userName = call.argument(ARGUMENT_KEY_USERNAME);
         req.path = call.argument(ARGUMENT_KEY_PATH);
         req.miniprogramType = call.argument(ARGUMENT_KEY_TYPE);
@@ -512,8 +577,18 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
         result.success(null);
     }
 
+    private void handleOpenCustomerServiceChat(@NonNull MethodCall call, @NonNull Result result) {
+        final WXOpenCustomerServiceChat.Req req = new WXOpenCustomerServiceChat.Req();
+        req.corpId = call.argument(ARGUMENT_KEY_CORPID);
+        req.url = call.argument(ARGUMENT_KEY_URL);
+        if (iwxapi != null) {
+            iwxapi.sendReq(req);
+        }
+        result.success(null);
+    }
+
     private void handlePayCall(@NonNull MethodCall call, @NonNull Result result) {
-        PayReq req = new PayReq();
+        final PayReq req = new PayReq();
         req.appId = call.argument(ARGUMENT_KEY_APPID);
         req.partnerId = call.argument(ARGUMENT_KEY_PARTNERID);
         req.prepayId = call.argument(ARGUMENT_KEY_PREPAYID);
@@ -533,8 +608,8 @@ public class WechatKitPlugin implements FlutterPlugin, ActivityAware, MethodCall
         if (iwxapi != null && iwxapi.getWXAppSupportAPI() >= 0x27000D00) {
             if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.N) {
                 try {
-                    ProviderInfo providerInfo = applicationContext.getPackageManager().getProviderInfo(new ComponentName(applicationContext, WechatFileProvider.class), PackageManager.MATCH_DEFAULT_ONLY);
-                    Uri shareFileUri = FileProvider.getUriForFile(applicationContext, providerInfo.authority, new File(Uri.parse(fileUri).getPath()));
+                    final ProviderInfo providerInfo = applicationContext.getPackageManager().getProviderInfo(new ComponentName(applicationContext, WechatFileProvider.class), PackageManager.MATCH_DEFAULT_ONLY);
+                    final Uri shareFileUri = FileProvider.getUriForFile(applicationContext, providerInfo.authority, new File(Uri.parse(fileUri).getPath()));
                     applicationContext.grantUriPermission("com.tencent.mm", shareFileUri, Intent.FLAG_GRANT_READ_URI_PERMISSION);
                     return shareFileUri.toString();
                 } catch (PackageManager.NameNotFoundException e) {
